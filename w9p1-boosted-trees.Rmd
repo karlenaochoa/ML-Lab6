@@ -1,0 +1,255 @@
+---
+title: "Gradient Boosting (with trees)"
+author: "Daniel Anderson "
+date: "Week 9, Class 1"
+output:
+  xaringan::moon_reader:
+    css: ["default", "uo", "uo-fonts", "hygge", "custom.css"]
+    lib_dir: libs
+    nature:
+      highlightStyle: atelier-dune-light
+      highlightLines: true
+      countIncrementalSlides: false
+      beforeInit: "https://platform.twitter.com/widgets.js"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(fig.width = 13, 
+                      message = FALSE, 
+                      warning = FALSE,
+                      echo = TRUE,
+                      cache = TRUE)
+
+library(tidyverse)
+
+update_geom_defaults('path', list(size = 3, color = "cornflowerblue"))
+update_geom_defaults('point', list(size = 5, color = "gray60"))
+theme_set(theme_minimal(base_size = 25))
+```
+
+# Agenda
+
+---
+# Quick review
+
+* For bagged trees and random forests, we create $b$ bootstrap resamples, fit a model to each resample, then aggregate the results for a single prediction
+
+
+--
+* Random forests include an additional stochastic component, sampling $m$ features for each resample, which can help decorrelate the trees and lead to better predictions
+
+
+--
+* For each of these models, you need sufficient resamples to obtain a stable estimate, but additional resamples will only "cost" in terms of computational efficiency 
+
+
+---
+# Boosting
+
+* Like bagging, boosting is a general algorithm that can be applied to any model, but it's very common with trees
+
+
+--
+* Like bagging, boosting is an ensemble approach, where many models are fit to the data
+
+
+--
+### Key difference from bagging
+* Rather than using boostrapping, boosted models are built .b[.ital[sequentially]], with each model fit to the residuals from the previous
+
+
+--
+* information from tree 1 .b[feeds into] tree 2, which .b[feeds into] tree 3... etc.
+
+
+---
+background-image: url(https://bradleyboehmke.github.io/HOML/images/boosted-trees-process.png)
+background-size: contain
+# Boosting illustrated
+
+
+.footnote[https://bradleyboehmke.github.io/HOML/gbm.html]
+
+
+---
+# Components of boosting
+
+* .bolder[.b[Base learner]]: The model that is iteratively fit. Can be any model but it practice is almost always a .ital[shallow] decision tree
+
+
+--
+* .bolder[.b[Weak models]]: Improves error rate only slighltly more than chance. The weak learning is boosted by the iterative fit, and the model learns slow 
+
+    + Trees with 1-6 splits are common
+
+
+  
+--
+* .bolder[.b[Sequential fit]]: See algorithm on next slide
+
+---
+# Sequential fitting algorithm
+
+1. Fit a decision tree to the data: $f_1\left(x\right) = y$
+
+
+--
+2. Fit a second decisin tree to the residuals of the first: $h_1\left(x\right) = y - f_1\left(x\right)$
+
+
+--
+3. Add the trees together to obtain an ensemble algorithm: $f_2\left(x\right) = f_1\left(x\right) + h_1\left(x\right)$
+
+
+--
+4. Fit a new decision tree to the residuals of this model: $h_2\left(x\right) = y - f_2\left(x\right)$
+
+
+--
+5. Add this tree to our ensemble: $f_3\left(x\right) = f_2\left(x\right) + h_2\left(x\right)$
+
+
+--
+6. Continue onward until some criterion (stopping rule) is met
+
+---
+# Final Model
+
+$$
+f\left(x\right) =  \sum^B_{b=1}f^b\left(x\right)
+$$
+
+---
+# Slow learning
+
+* Boosted models typically .ital[learn slow], which sounds bad, but is regularly helpful in finding an optimal solution
+
+
+--
+* Each tree is very shallow, and learns little about the data on its own
+
+
+--
+* By contrast, random forests include aggregation across many deep, independent trees (i.e., each tree learns a lot, but variance is reduced through averaging)
+
+
+---
+background-image: url(https://bradleyboehmke.github.io/HOML/10-gradient-boosting_files/figure-html/boosting-in-action-1.png)
+background-size: contain
+class: inverse
+
+### Slow Learning Illustrated
+
+.footnote[https://bradleyboehmke.github.io/HOML/gbm.html]
+
+
+---
+# Another way to think of it
+
+.pull-left[
+![](https://miro.medium.com/max/800/1*qUPwF7Idt2yudQu8Sh1Kzw.gif)
+]
+
+
+--
+.pull-right[
+![](https://miro.medium.com/max/800/1*8mgMKa1dg93fUBk1oUG42A.gif)
+]
+
+---
+# Out of the box performance
+* Perhaps the "best" out-of-the-box model for performance
+
+* One of the most common algorithms used across Kaggle winners
+
+* A boosted model "when appropriately tuned, is often hard to beat with other algorithms" ([Bohemke & Greenwell](https://bradleyboehmke.github.io/HOML/gbm.html))
+
+
+---
+# Gradient Descent
+
+* General purpose optimization algorithm
+
+--
+* Varients of gradient descent (e.g., stochastic gradient descent) are used throughout many advanced ML applications (e.g., deep learning)
+
+
+--
+* Move in direction of steepest descent until you reach a minimum
+
+---
+background-image:url(https://ml-cheatsheet.readthedocs.io/en/latest/_images/gradient_descent.png)
+background-size: cover
+
+.footnote[https://ml-cheatsheet.readthedocs.io/en/latest/gradient_descent.html]
+
+---
+# Steps
+The size of step we take at each iteration (recalculation of the gradient so we know which way to go) is referred to as the .ital[learning rate].
+
+---
+# Illustration with linear regression
+
+* First, simulate some data
+
+```{r sim-lin-reg}
+set.seed(8675309)
+n <- 1000
+X <- rnorm(n)
+
+a <- .5
+b <- 0.1
+e <- 2
+
+y <- a + b*X + rnorm(n, sd = e)
+
+```
+
+---
+# Plot
+
+```{r plot-sim}
+tibble(x = X, y = y) %>% 
+  ggplot(aes(x, y)) +
+   geom_point()
+```
+
+---
+# Estimate w/OLS
+
+```{r estimate-sim}
+summary(lm(y ~ X))
+```
+
+
+---
+# Estimate with gradient descent
+
+```{r label, options}
+update_gd <- function(m, b, X, Y, learning_rate) {
+    m_deriv = 0
+    b_deriv = 0
+    N = length(X)
+    for (i in seq_along(N)) {
+        # Calculate partial derivatives
+        # -2x(y - (mx + b))
+        m_deriv = m_deriv + -2*X[i] * (Y[i] - (m*X[i] + b))
+
+        # -2(y - (mx + b))
+        b_deriv = b_deriv + -2*(Y[i] - (m*X[i] + b))
+    }
+    # We subtract because the derivatives point in direction of steepest ascent
+    m = m - (m_deriv / N) * learning_rate
+    b = b - (b_deriv / N) * learning_rate
+
+    c(m, b)
+}
+
+iter <- update_gd(0, 0, X, y, 1)
+
+tmp <- rerun(5000, {
+  iter <- update_gd(iter[1], iter[2], X, y, 1)
+  print(iter)
+})
+tail(tmp)
+```
