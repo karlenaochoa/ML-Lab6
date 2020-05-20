@@ -153,12 +153,18 @@ show_best(tune_tree, metric = "huber_loss", n = 1)
 * tune on `cost_complexity` and `min_n`
 
 ```{r}
+bt_mod <- bag_tree() %>% 
+  set_mode("regression") %>% 
+  set_args(cost_complexity = tune(), min_n = tune()) %>% 
+  set_engine("rpart", times = 10)
 
 ```
 
 2. Create a `workflow` object that combines your `recipe` and your bagged tree model specification.
 ```{r}
-
+bt_workflow <- dt_workflow %>%
+  update_model(bt_mod)
+bt_workflow
 ```
 
 3. Tune your model with `tune_grid`
@@ -171,13 +177,32 @@ show_best(tune_tree, metric = "huber_loss", n = 1)
 #### **Question: Before you run the code, how many trees will this function execute?**
 
 ```{r}
+plan(multisession)
 
+tic()
+
+bt_tune_tree <- tune_grid(bt_workflow, 
+                       cv, 
+                       metrics = metrics_eval, 
+                       control= control_resamples(extract = function(x) extract_model(x)))
+
+
+toc()
+# 220.79 sec
+
+plan(sequential)
+
+bt_tune_tree %>% 
+  select(id, .metrics)%>%
+  unnest(.metrics)
 ```
 
 4. Show the single best estimates for each of the three performance metrics and the tuning parameter values associated with each.
 
 ```{r}
-
+show_best(bt_tune_tree, metric = "rsq", n = 1)
+show_best(bt_tune_tree, metric = "rmse", n = 1)
+show_best(bt_tune_tree, metric = "huber_loss", n = 1)
 ```
 
 5. Run the `bag_roots` function below. Apply this function to the extracted bagged tree models from the previous step. This will output the feature at the root node for each of the decision trees fit. 
