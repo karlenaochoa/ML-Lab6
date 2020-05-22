@@ -3,7 +3,10 @@ title: "Lab 6"
 subtitle: "Random Forests/Bagging"
 author: "Karlena Ochoa, Tamara Niella, Kathryn Denning"
 date: "Assigned 5/20/20, Due 5/27/19"
-
+output:
+  html_document: 
+    toc: true
+    toc_float: true
 ---
 
 ```{r setup, include=FALSE}
@@ -51,13 +54,14 @@ sheets <- readxl::excel_sheets(here::here("data", "fallmembershipreport_20192020
 
 ode_schools <- readxl::read_xlsx(here::here("data", "fallmembershipreport_20192020.xlsx"), sheet = sheets[4])
 
-ethnicities <- ode_schools %>% 
+ethnicities <- ode_schools %>%
   select(attnd_schl_inst_id = `Attending School ID`,
-         sch_name = `School Name`,
-         contains("%")) %>% 
+  attnd_dist_inst_id = `Attending District Institution ID`,
+  sch_name = `School Name`,
+  contains("%")) %>%
   janitor::clean_names()
-names(ethnicities) <- gsub("x2019_20_percent", "p", names(ethnicities))
 
+names(ethnicities) <- gsub("x2019_20_percent", "p", names(ethnicities))
 
 train_df <- left_join(train, ethnicities)
 ```
@@ -120,7 +124,7 @@ dt_workflow <-
 * Use `grid = 10` to choose 10 grid points automatically
 * In the `metrics` argument, please include `rmse`, `rsq`, and `huber_loss`
 * Record the time it takes to run. You could use `{tictoc}`, or you could do something like:
-```{r, echo=TRUE, eval=FALSE}
+```{r}
 tic()
 
 metrics_eval <- metric_set(rmse,
@@ -174,7 +178,9 @@ bt_workflow
 * `{baguette}` is optimized to run in parallel with the `{future}` package. Consider using `{future}` to speed up processing time (see the class slides)
 * Record the time it takes to run
 
-#### **Question: Before you run the code, how many trees will this function execute?**
+**Question: Before you run the code, how many trees will this function execute?**
+
+Alot! Turns out to be around 300. 
 
 ```{r}
 plan(multisession)
@@ -221,6 +227,9 @@ bag_roots <- function(x){
                      ~as.character(.x$fit$frame[1, 1]))) %>%
   select(root)  
 }
+
+
+root_df <- bag_roots(bt_tune_tree)
 ```
 
 6. Produce a plot of the frequency of features at the root node of the trees in your bagged model.
@@ -228,6 +237,9 @@ bag_roots <- function(x){
 
 ```{r}
 
+ggplot(aes(root), data = root_df) +
+  geom_bar() +
+  coord_flip()
 
 ```
 
@@ -238,11 +250,35 @@ bag_roots <- function(x){
 * specify 1,000 trees, but keep the other default tuning parameters
 
 ```{r}
+floor(sqrt(39))
 
+(cores <- parallel::detectCores())
+
+rf_mod <-
+  rand_forest() %>% 
+  set_engine("ranger",
+             num.threads = cores, #argument from {ranger}
+             importance = "permutation", #argument from {ranger} 
+             verbose = TRUE) %>% #argument from {ranger} 
+  set_mode("regression")
+
+translate(rf_mod)
+```
+
+```{r}
+rf_tune_mod <- rf_mod %>% 
+  set_args(
+    trees = 1000)
+
+translate(rf_tune_mod)
 ```
 
 2. Create a `workflow` object that combines your `recipe` and your random forest model specification.
 ```{r}
+rf_mod_workflow <- 
+  workflow() %>% 
+  add_model(rf_tune_mod) %>% 
+  add_recipe(rec)
 
 ```
 
@@ -252,13 +288,33 @@ bag_roots <- function(x){
 * Record the time it takes to run
 
 ```{r}
+plan(multisession)
 
+tic()
+
+rf_res <- fit_resamples(rf_mod_workflow, 
+                       cv, 
+                       control = control_resamples(extract = function(x) extract_model(x)),
+                       metrics = metrics_eval)
+
+
+toc()
+# 13.3 sec
+
+plan(sequential)
+
+rf_res %>% 
+  select(id, .metrics)%>%
+  unnest(.metrics)
 ```
+
 
 4. Show the single best estimates for each of the three performance metrics.
 
 ```{r}
-
+show_best(rf_res, metric = "rsq", n = 1)
+show_best(rf_res, metric = "rmse", n = 1)
+show_best(rf_res, metric = "huber_loss", n = 1)
 ```
 
 5. Run the two functions in the code chunk below. Then apply the `rf_roots` function to the results of your random forest model to output the feature at the root node for each of the decision trees fit in your random forest model. 
@@ -285,22 +341,30 @@ rf_roots <- function(x){
   unnest(cols = c(roots))
 }
 
-
+#rf_roots(rf_res) won't run
 ```
 
-6. Produce a plot of the frequency of features at the root node of the trees in your bagged model.
+6. Produce a plot of the frequency of features at the root node of the trees in your bagged model
 
 ```{r}
 
+rf_res
+
+rf_res$.extracts[[1]]
+
+pluck(rf_res$.extracts[[1]]$.extracts, 1)
+
+names(pluck(rf_res$.extracts[[1]]$.extracts, 1))
+
+
+pluck(rf_res$.extracts[[1]]$.extracts, 1) %>%
+  vip()
 
 ```
 
 7. Please explain why the bagged tree root node figure and the random forest root node figure are different.
 
-```{r}
-
-
-```
+In bagged tree, the model only uses the strongest predictors (2-3 for our model). Random forests are only able to use a random subset of features, so some trees/splits may not even have the option to use strongest predictor. This reduces tree correlation, and makes the types of trees more diverse than bagged trees.
 
 8. Apply the `fit` function to your random forest `workflow` object and your **full** training data.
 In class we talked about the idea that bagged tree and random forest models use resampling, and one *could* use the OOB prediction error provided by the models to estimate model performance.
@@ -310,13 +374,40 @@ In class we talked about the idea that bagged tree and random forest models use 
 * How does OOB *rmse* here compare to the mean *rmse* estimate from your 10-fold CV random forest? How might 10-fold CV influence bias-variance?
 
 ```{r}
+rf_best <- show_best(rf_res, metric = "rmse", n = 10) %>% 
+  group_by(.metric) %>% 
+  slice(1)
+
+rf_wf_final <- finalize_workflow(
+  rf_mod_workflow,
+  rf_best)
+
+rf_wf_final
+
+tic()
+
+rf_res_final <- last_fit(rf_wf_final,
+                         split = splt)
+
+toc() #2.22 sec 
+
+
+rf_res_final %>% 
+  select(id, .metrics)%>%
+  unnest(.metrics)
+#mean rmse = 90.7 00B vs 97.1 
 
 ```
+
 
 ## Compare Performance 
 
 Consider the four models you fit: (a) decision tree, (b) bagged tree, (c) random forest fit on resamples, and (d) random forest fit on the training data. Which model would you use for your final fit? Please consider the performance metrics as well as the run time, and briefly explain your decision. 
 
+(a) decision tree: rmse = 102, 62.56 sec 
+(b) bagged tree: rmse = 97.4, 220.8 sec 
+(c) random forest fit on resamples: rmse = 97.1, 13.3 sec  
+(d) random forest fit on the training data: rmse = 90.7, 2.22 sec 
 
-
+ Random forest models provided the best estimates and ran the quickest. We would use random forest for the final fit. 
 
